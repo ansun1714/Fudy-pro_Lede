@@ -6,40 +6,41 @@ on:
 permissions:
   contents: write
 
-env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  CONFIG_FILE: config/WH3000.config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  TZ: Asia/Shanghai
-
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
+
     - name: 检出仓库
       uses: actions/checkout@v4
 
+    #=================================================
+    # 仅做安全清理（稳定版）
+    #=================================================
     - name: 释放磁盘空间
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 2048
-        swap-size-mb: 1024
-        remove-dotnet: true
-        remove-android: true
-        remove-haskell: true
-        remove-codeql: true
+      run: |
+        echo "清理前"
+        df -h
 
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -a -f
+
+        sudo apt-get clean
+
+        echo "清理后"
+        df -h
+
+    #=================================================
+    # 编译环境
+    #=================================================
     - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt update
-        sudo apt full-upgrade -y
+        sudo -E apt-get update
 
-        sudo apt install -y \
+        sudo -E apt-get install -y \
         build-essential \
         clang \
         flex \
@@ -53,7 +54,8 @@ jobs:
         libncurses5-dev \
         libssl-dev \
         python3 \
-        python3-pyelftools \
+        python3-pip \
+        python3-setuptools \
         rsync \
         unzip \
         zlib1g-dev \
@@ -61,86 +63,106 @@ jobs:
         wget \
         curl \
         qemu-utils \
-        ccache \
+        upx-ucl \
         libelf-dev \
-        ecj \
-        fastjar \
-        java-propose-classpath \
-        python3-distutils \
-        time
+        autoconf \
+        automake \
+        texinfo \
+        cmake \
+        ccache \
+        libtool \
+        device-tree-compiler
 
-        sudo timedatectl set-timezone "$TZ"
-
+    #=================================================
+    # 拉取 LEDE
+    #=================================================
     - name: 克隆 LEDE 源码
       run: |
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH lede
+        git clone --depth=1 https://github.com/coolsnowwolf/lede.git openwrt
 
     - name: 执行 DIY1
       run: |
-        chmod +x $DIY_P1_SH
-        cd lede
-        ../$DIY_P1_SH
+        cd openwrt
+        chmod +x ../diy-part1.sh
+        ../diy-part1.sh
 
-    - name: 更新并安装 feeds
+    #=================================================
+    # feeds
+    #=================================================
+    - name: 更新 feeds
       run: |
-        cd lede
+        cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: 复制配置文件
+    #=================================================
+    # config
+    #=================================================
+    - name: 复制配置
       run: |
-        cp $CONFIG_FILE lede/.config
+        cp .config openwrt/.config
 
     - name: 执行 DIY2
       run: |
-        chmod +x $DIY_P2_SH
-        cd lede
-        ../$DIY_P2_SH
+        cd openwrt
+        chmod +x ../diy-part2.sh
+        ../diy-part2.sh
 
+    #=================================================
+    # defconfig
+    #=================================================
     - name: 加载配置
       run: |
-        cd lede
+        cd openwrt
         make defconfig
 
-    - name: 下载依赖
+    #=================================================
+    # 下载依赖
+    #=================================================
+    - name: 下载 dl
       run: |
-        cd lede
-        make download -j8
+        cd openwrt
+        make download -j8 || make download -j1 V=s
 
+    #=================================================
+    # 编译
+    #=================================================
     - name: 编译固件
       run: |
-        cd lede
+        cd openwrt
+
+        echo "CPU线程:"
+        nproc
+
         make -j$(nproc) V=s
 
+    #=================================================
+    # 整理
+    #=================================================
     - name: 整理固件
       run: |
         mkdir -p upload
-        find lede/bin/targets/ -type f \
-        \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" -o -name "*.tar" \) \
-        -exec cp {} upload/ \;
+        find openwrt/bin/targets/ -type f \
+          \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" \) \
+          -exec cp {} upload/ \;
 
-    - name: 上传 Artifacts
+    #=================================================
+    # 上传
+    #=================================================
+    - name: 上传Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: LEDE-WH3000
         path: upload/
 
-    - name: 生成 Release 标签
-      id: tag
-      run: |
-        echo "release_tag=lede-$(date +%Y.%m.%d-%H%M)" >> $GITHUB_OUTPUT
-        echo "status=success" >> $GITHUB_OUTPUT
-
+    #=================================================
+    # Release（稳定版）
+    #=================================================
     - name: 发布 Release
       uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.status == 'success'
+      if: success()
+      with:
+        tag_name: lede-$(date +%Y.%m.%d-%H%M)
+        files: upload/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        files: upload/*
-        draft: false
-        prerelease: false
-
-    - name: 完成编译
-      run: echo "编译完成"
