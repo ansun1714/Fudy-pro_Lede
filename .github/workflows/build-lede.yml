@@ -1,46 +1,41 @@
-name: 编译 LEDE 固件 (WH3000)
+name: 编译 LEDE 固件（WH3000）
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-
     - name: 检出仓库
       uses: actions/checkout@v4
 
-    #=================================================
-    # 仅做安全清理（稳定版）
-    #=================================================
+    # =========================
+    # 释放磁盘空间（稳定版）
+    # =========================
     - name: 释放磁盘空间
       run: |
-        echo "清理前"
-        df -h
-
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/hostedtoolcache/CodeQL
         sudo docker image prune -a -f
 
         sudo apt-get clean
+        sudo swapoff -a
+        sudo rm -f /swapfile
 
-        echo "清理后"
         df -h
 
-    #=================================================
-    # 编译环境
-    #=================================================
+    # =========================
+    # 安装依赖（稳定版）
+    # =========================
     - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo -E apt-get update
+        sudo apt-get update
 
-        sudo -E apt-get install -y \
+        sudo apt-get install -y \
         build-essential \
         clang \
         flex \
@@ -54,91 +49,83 @@ jobs:
         libncurses5-dev \
         libssl-dev \
         python3 \
-        python3-pip \
-        python3-setuptools \
+        python3-pyelftools \
         rsync \
         unzip \
         zlib1g-dev \
         file \
         wget \
         curl \
-        qemu-utils \
-        upx-ucl \
-        libelf-dev \
-        autoconf \
-        automake \
-        texinfo \
-        cmake \
-        ccache \
-        libtool \
-        device-tree-compiler
+        ccache
 
-    #=================================================
-    # 拉取 LEDE
-    #=================================================
+    # =========================
+    # 拉取源码
+    # =========================
     - name: 克隆 LEDE 源码
       run: |
-        git clone --depth=1 https://github.com/coolsnowwolf/lede.git openwrt
+        git clone --depth=1 https://github.com/coolsnowwolf/lede openwrt
 
+    # =========================
+    # DIY1
+    # =========================
     - name: 执行 DIY1
       run: |
+        chmod +x diy-part1.sh
         cd openwrt
-        chmod +x ../diy-part1.sh
         ../diy-part1.sh
 
-    #=================================================
-    # feeds
-    #=================================================
+    # =========================
+    # 更新 feeds
+    # =========================
     - name: 更新 feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    #=================================================
-    # config
-    #=================================================
+    # =========================
+    # 复制配置
+    # =========================
     - name: 复制配置
       run: |
-        cp .config openwrt/.config
+        cp lede.config openwrt/.config
 
+    # =========================
+    # DIY2
+    # =========================
     - name: 执行 DIY2
       run: |
+        chmod +x diy-part2.sh
         cd openwrt
-        chmod +x ../diy-part2.sh
         ../diy-part2.sh
 
-    #=================================================
+    # =========================
     # defconfig
-    #=================================================
+    # =========================
     - name: 加载配置
       run: |
         cd openwrt
         make defconfig
 
-    #=================================================
-    # 下载依赖
-    #=================================================
+    # =========================
+    # 下载 dl
+    # =========================
     - name: 下载 dl
       run: |
         cd openwrt
-        make download -j8 || make download -j1 V=s
+        make download -j8
 
-    #=================================================
+    # =========================
     # 编译
-    #=================================================
+    # =========================
     - name: 编译固件
       run: |
         cd openwrt
+        make -j2 V=s
 
-        echo "CPU线程:"
-        nproc
-
-        make -j$(nproc) V=s
-
-    #=================================================
-    # 整理
-    #=================================================
+    # =========================
+    # 整理固件
+    # =========================
     - name: 整理固件
       run: |
         mkdir -p upload
@@ -146,23 +133,11 @@ jobs:
           \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" \) \
           -exec cp {} upload/ \;
 
-    #=================================================
+    # =========================
     # 上传
-    #=================================================
-    - name: 上传Artifacts
+    # =========================
+    - name: 上传固件
       uses: actions/upload-artifact@v4
       with:
-        name: LEDE-WH3000
-        path: upload/
-
-    #=================================================
-    # Release（稳定版）
-    #=================================================
-    - name: 发布 Release
-      uses: softprops/action-gh-release@v2
-      if: success()
-      with:
-        tag_name: lede-$(date +%Y.%m.%d-%H%M)
-        files: upload/*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: WH3000_firmware
+        path: upload
