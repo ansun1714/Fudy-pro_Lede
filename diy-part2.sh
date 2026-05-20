@@ -1,15 +1,12 @@
 #!/bin/bash
-#=================================================
-# DIY2 - WH3000 MT7981 极速启动优化版
-#=================================================
 
-echo "========================================="
-echo " WH3000 极速 WiFi 启动优化开始"
-echo "========================================="
+echo "========================================"
+echo " WH3000 专用优化脚本开始"
+echo "========================================"
 
-#=================================================
+# =====================================================
 # 1. 主机名
-#=================================================
+# =====================================================
 
 mkdir -p files/etc/uci-defaults
 
@@ -29,39 +26,38 @@ chmod +x files/etc/uci-defaults/01-system
 
 echo ">>> 主机名配置完成"
 
-#=================================================
+# =====================================================
 # 2. 默认主题
-#=================================================
+# =====================================================
 
-if [ -f package/lean/default-settings/files/zzz-default-settings ]; then
-    sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
-    package/lean/default-settings/files/zzz-default-settings
-fi
+sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
+package/lean/default-settings/files/zzz-default-settings 2>/dev/null
 
-echo ">>> 默认主题切换为 Design"
+echo ">>> 默认主题修改完成"
 
-#=================================================
+# =====================================================
 # 3. Lucky 权限
-#=================================================
+# =====================================================
 
-find feeds/lucky/ -type f -name "lucky*" \
--exec chmod +x {} \; 2>/dev/null || true
+find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
 
 echo ">>> Lucky 权限修复完成"
 
-#=================================================
+# =====================================================
 # 4. WiFi 极速启动优化（核心）
-#=================================================
+# =====================================================
 
 mkdir -p files/etc/config
 
 cat > files/etc/config/wireless << 'EOF'
 config wifi-device 'radio0'
         option type 'mac80211'
+        option path 'platform/soc/18000000.wifi'
         option band '2g'
         option channel 'auto'
         option htmode 'HT40'
         option country 'CN'
+        option cell_density '0'
         option disabled '0'
 
 config wifi-iface 'default_radio0'
@@ -74,10 +70,12 @@ config wifi-iface 'default_radio0'
 
 config wifi-device 'radio1'
         option type 'mac80211'
+        option path 'platform/soc/18000000.wifi+1'
         option band '5g'
-        option channel 'auto'
+        option channel '36'
         option htmode 'HE80'
         option country 'CN'
+        option cell_density '0'
         option disabled '0'
 
 config wifi-iface 'default_radio1'
@@ -89,110 +87,112 @@ config wifi-iface 'default_radio1'
         option key '12345678'
 EOF
 
-echo ">>> 预置无线配置完成"
+echo ">>> WiFi 预配置完成"
 
-#=================================================
-# 5. 提前加载 MT7981 WiFi 驱动（关键）
-#=================================================
+# =====================================================
+# 5. WiFi 启动加速（关键）
+# =====================================================
 
-mkdir -p files/etc/modules.d
-
-cat > files/etc/modules.d/99-mtwifi << 'EOF'
+cat > files/etc/modules.d/99-mtk-wifi << 'EOF'
 mt_wifi
 mt_wifi_mt7981
-mt_wifi_mt7986
+mt7981-firmware
 EOF
 
-echo ">>> WiFi 驱动预加载完成"
+echo ">>> WiFi 模块预加载完成"
 
-#=================================================
+# =====================================================
 # 6. 避免首次启动重新生成无线
-#=================================================
+# =====================================================
 
 mkdir -p files/etc/uci-defaults
 
-cat > files/etc/uci-defaults/99-disable-wifi-reset << 'EOF'
+cat > files/etc/uci-defaults/99-wifi-fast << 'EOF'
 #!/bin/sh
 
 rm -f /etc/uci-defaults/network
 rm -f /etc/uci-defaults/wireless
 
+wifi reload >/dev/null 2>&1
+
 exit 0
 EOF
 
-chmod +x files/etc/uci-defaults/99-disable-wifi-reset
+chmod +x files/etc/uci-defaults/99-wifi-fast
 
-echo ">>> 禁止首次重建无线配置"
+echo ">>> WiFi 首启优化完成"
 
-#=================================================
-# 7. Docker 优化
-#=================================================
+# =====================================================
+# 7. Docker
+# =====================================================
+
+cat > files/etc/config/fstab << 'EOF'
+config global
+        option anon_mount '1'
+        option auto_mount '1'
+        option auto_swap '1'
+
+config mount
+        option target '/mnt/mmcblk0p7'
+        option device '/dev/mmcblk0p7'
+        option fstype 'ext4'
+        option options 'rw,sync,noatime'
+        option enabled '1'
+EOF
 
 cat > files/etc/config/docker << 'EOF'
 config globals
-        option data_root '/opt/docker'
+        option data_root '/mnt/mmcblk0p7/docker'
 EOF
 
 echo ">>> Docker 配置完成"
 
-#=================================================
-# 8. 系统启动优化
-#=================================================
-
-cat > files/etc/sysctl.conf << 'EOF'
-net.netfilter.nf_conntrack_max=65535
-net.core.somaxconn=65535
-net.ipv4.tcp_fastopen=3
-net.ipv4.tcp_syncookies=1
-EOF
-
-echo ">>> 系统优化完成"
-
-#=================================================
-# 9. 修复 GPT 延迟（重点）
-#=================================================
+# =====================================================
+# 8. QModem 自动启用
+# =====================================================
 
 mkdir -p files/etc/uci-defaults
 
-cat > files/etc/uci-defaults/30-emmc-fix << 'EOF'
+cat > files/etc/uci-defaults/88-qmodem << 'EOF'
 #!/bin/sh
 
-block detect > /etc/config/fstab
-
-uci set fstab.@global[0].delay_root='3'
-uci commit fstab
+/etc/init.d/qmodem enable >/dev/null 2>&1
+/etc/init.d/qmodem start >/dev/null 2>&1
 
 exit 0
 EOF
 
-chmod +x files/etc/uci-defaults/30-emmc-fix
+chmod +x files/etc/uci-defaults/88-qmodem
 
-echo ">>> eMMC 启动延迟优化完成"
+echo ">>> QModem 启用完成"
 
-#=================================================
+# =====================================================
+# 9. 系统优化
+# =====================================================
+
+cat > files/etc/sysctl.conf << 'EOF'
+net.core.default_qdisc=fq_codel
+net.ipv4.tcp_congestion_control=bbr
+EOF
+
+echo ">>> 系统优化完成"
+
+# =====================================================
 # 10. Banner
-#=================================================
-
-mkdir -p files/etc
+# =====================================================
 
 cat > files/etc/banner << 'EOF'
 
-██╗    ██╗██╗  ██╗██████╗  ██████╗  ██████╗
-██║    ██║██║  ██║╚════██╗██╔═████╗██╔═████╗
-██║ █╗ ██║███████║ █████╔╝██║██╔██║██║██╔██║
-██║███╗██║██╔══██║██╔═══╝ ████╔╝██║████╔╝██║
-╚███╔███╔╝██║  ██║███████╗╚██████╔╝╚██████╔╝
- ╚══╝╚══╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝
+ __        ___   _  _____  ___   ___   ___
+ \ \      / / | | ||___ / / _ \ / _ \ / _ \
+  \ \ /\ / /| |_| |  |_ \| | | | | | | | | |
+   \ V  V / |  _  | ___) | |_| | |_| | |_| |
+    \_/\_/  |_| |_||____/ \___/ \___/ \___/
 
- WH3000 · LEDE · MT7981 极速优化版
+      WH3000 Optimized Build
 
 EOF
 
-echo "========================================="
-echo " DIY2 执行完成"
-echo " 已启用："
-echo " ✔ 极速 WiFi 启动"
-echo " ✔ MT7981 驱动预加载"
-echo " ✔ 禁止首次无线重建"
-echo " ✔ eMMC 启动优化"
-echo "========================================="
+echo "========================================"
+echo " 所有优化完成"
+echo "========================================"
