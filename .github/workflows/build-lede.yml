@@ -1,13 +1,28 @@
-name: 编译 LEDE 固件（WH3000）
+name: 编译 LEDE(Fudy/fudy_pro)
 
 on:
   workflow_dispatch:
+    inputs:
+      device:
+        description: "选择设备型号"
+        required: true
+        default: "WH3000"
+        type: choice
+        options:
+          - WH3000
+          - WH3000Pro
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
+    permissions:
+      contents: write
+
     steps:
+    # =========================
+    # 检出仓库
+    # =========================
     - name: 检出仓库
       uses: actions/checkout@v4
 
@@ -16,20 +31,25 @@ jobs:
     # =========================
     - name: 释放磁盘空间
       run: |
+        echo "删除无用环境..."
+
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /opt/ghc
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/hostedtoolcache/CodeQL
+
         sudo docker image prune -a -f
 
         sudo apt-get clean
-        sudo swapoff -a
+
+        sudo swapoff -a || true
         sudo rm -f /swapfile
 
+        echo "当前磁盘空间:"
         df -h
 
     # =========================
-    # 安装依赖（稳定版）
+    # 初始化环境
     # =========================
     - name: 初始化编译环境
       run: |
@@ -59,7 +79,7 @@ jobs:
         ccache
 
     # =========================
-    # 拉取源码
+    # 克隆 LEDE
     # =========================
     - name: 克隆 LEDE 源码
       run: |
@@ -71,24 +91,34 @@ jobs:
     - name: 执行 DIY1
       run: |
         chmod +x diy-part1.sh
+
         cd openwrt
         ../diy-part1.sh
 
     # =========================
-    # 更新 feeds
+    # feeds
     # =========================
     - name: 更新 feeds
       run: |
         cd openwrt
+
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
     # =========================
-    # 复制配置
+    # 根据设备加载配置
     # =========================
-    - name: 复制配置
+    - name: 加载设备配置
       run: |
-        cp lede.config openwrt/.config
+        DEVICE="${{ github.event.inputs.device }}"
+
+        echo "当前设备: $DEVICE"
+
+        if [ "$DEVICE" = "WH3000Pro" ]; then
+          cp config/wh3000pro.config openwrt/.config
+        else
+          cp config/wh3000.config openwrt/.config
+        fi
 
     # =========================
     # DIY2
@@ -96,6 +126,7 @@ jobs:
     - name: 执行 DIY2
       run: |
         chmod +x diy-part2.sh
+
         cd openwrt
         ../diy-part2.sh
 
@@ -105,7 +136,20 @@ jobs:
     - name: 加载配置
       run: |
         cd openwrt
+
         make defconfig
+
+    # =========================
+    # 查看目标设备
+    # =========================
+    - name: 查看目标设备
+      run: |
+        cd openwrt
+
+        echo "===================="
+        echo "Target Profile:"
+        grep CONFIG_TARGET.*DEVICE.*=y .config || true
+        echo "===================="
 
     # =========================
     # 下载 dl
@@ -113,6 +157,7 @@ jobs:
     - name: 下载 dl
       run: |
         cd openwrt
+
         make download -j8
 
     # =========================
@@ -121,6 +166,9 @@ jobs:
     - name: 编译固件
       run: |
         cd openwrt
+
+        echo "开始编译..."
+
         make -j2 V=s
 
     # =========================
@@ -130,37 +178,45 @@ jobs:
       run: |
         mkdir -p upload
 
+        DEVICE="${{ github.event.inputs.device }}"
+
         find openwrt/bin/targets/ -type f \
           \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" \) \
           -exec cp {} upload/ \;
 
-        ls -lh upload
+        cd upload
+
+        for file in *; do
+          mv "$file" "${DEVICE}_${file}"
+        done
+
+        echo "固件列表:"
+        ls -lh
 
     # =========================
     # 上传 Artifact
     # =========================
-    - name: 上传固件
+    - name: 上传 Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: WH3000_firmware
+        name: ${{ github.event.inputs.device }}_firmware
         path: upload
 
     # =========================
-    # 生成 Release Tag
+    # 生成 Release 标签
     # =========================
     - name: 生成 Release 标签
       id: tag
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "release_tag=${{ github.event.inputs.device }}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
 
     # =========================
-    # 上传到 Release（DeepSeek稳定方案）
+    # 发布 Release
     # =========================
     - name: 发布到 Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         files: upload/*
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        generate_release_notes: false
+        token: ${{ secrets.GITHUB_TOKEN }}
