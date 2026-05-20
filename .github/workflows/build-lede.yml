@@ -115,9 +115,9 @@ jobs:
         echo "当前设备: $DEVICE"
 
         if [ "$DEVICE" = "WH3000Pro" ]; then
-          cp config/wh3000pro.config openwrt/.config
+          cp wh3000pro.config openwrt/.config
         else
-          cp config/wh3000.config openwrt/.config
+          cp wh3000.config openwrt/.config
         fi
 
     # =========================
