@@ -129,15 +129,38 @@ jobs:
     - name: 整理固件
       run: |
         mkdir -p upload
+
         find openwrt/bin/targets/ -type f \
           \( -name "*.bin" -o -name "*.img.gz" -o -name "*.itb" \) \
           -exec cp {} upload/ \;
 
+        ls -lh upload
+
     # =========================
-    # 上传
+    # 上传 Artifact
     # =========================
     - name: 上传固件
       uses: actions/upload-artifact@v4
       with:
         name: WH3000_firmware
         path: upload
+
+    # =========================
+    # 生成 Release Tag
+    # =========================
+    - name: 生成 Release 标签
+      id: tag
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+
+    # =========================
+    # 上传到 Release（DeepSeek稳定方案）
+    # =========================
+    - name: 发布到 Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        files: upload/*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
