@@ -93,6 +93,8 @@ echo ">>> WiFi 预配置完成"
 # 5. WiFi 启动加速（关键）
 # =====================================================
 
+mkdir -p files/etc/modules.d
+
 cat > files/etc/modules.d/99-mtk-wifi << 'EOF'
 mt_wifi
 mt_wifi_mt7981
@@ -123,9 +125,13 @@ chmod +x files/etc/uci-defaults/99-wifi-fast
 echo ">>> WiFi 首启优化完成"
 
 # =====================================================
-# 7. Docker
+# 7. Docker（最终稳定版）
 # =====================================================
 
+mkdir -p files/etc/config
+mkdir -p files/etc/uci-defaults
+
+# 自动挂载 TF/ext4 分区
 cat > files/etc/config/fstab << 'EOF'
 config global
         option anon_mount '1'
@@ -140,12 +146,24 @@ config mount
         option enabled '1'
 EOF
 
-cat > files/etc/config/docker << 'EOF'
-config globals
-        option data_root '/mnt/mmcblk0p7/docker'
+# Docker 首次启动自动修改数据目录
+cat > files/etc/uci-defaults/30-docker << 'EOF'
+#!/bin/sh
+
+mkdir -p /mnt/mmcblk0p7/docker
+
+uci set dockerd.globals.data_root='/mnt/mmcblk0p7/docker'
+uci commit dockerd
+
+/etc/init.d/dockerd enable
+/etc/init.d/dockerd restart
+
+exit 0
 EOF
 
-echo ">>> Docker 配置完成"
+chmod +x files/etc/uci-defaults/30-docker
+
+echo ">>> Docker 数据目录已优化"
 
 # =====================================================
 # 8. QModem 自动启用
