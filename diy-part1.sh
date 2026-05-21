@@ -1,12 +1,21 @@
 #!/bin/bash
+# DIY 脚本第一部分：添加自定义软件源
+# 在 feeds update 之前由 workflow 执行
 
-# Lucky
+# Lucky（内网穿透/DDNS）
 echo "src-git lucky https://github.com/gdy666/luci-app-lucky.git" >> feeds.conf.default
 
-# Qmodem
+# Qmodem（4G/5G 模块管理）
 echo "src-git qmodem https://github.com/FUjr/modem_feeds.git;main" >> feeds.conf.default
 
-# IPTV
+# rtp2httpd（IPTV 组播转单播）
 echo "src-git rtp2httpd https://github.com/stackia/rtp2httpd.git" >> feeds.conf.default
 
-echo "========== LEDE 自定义 feeds 添加完成 =========="
+# msd_lite（IPTV 组播转单播，支持 IPv6，比 udpxy 更轻量）
+# 直接 clone 进 package 目录，不走 feeds
+git clone --depth=1 https://github.com/ximiTech/msd_lite package/msd_lite
+git clone --depth=1 https://github.com/ximiTech/luci-app-msd_lite package/luci-app-msd_lite
+
+echo "✅ 软件源添加完成"
+echo "当前 feeds.conf.default 内容："
+cat feeds.conf.default
