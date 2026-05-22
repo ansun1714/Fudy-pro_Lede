@@ -214,3 +214,21 @@ EOF
 echo "========================================"
 echo " 所有优化完成"
 echo "========================================"
+# =====================================================
+# msd_lite 默认配置文件
+# 确保 /etc/config/msd_lite 存在，否则 LuCI 显示空白
+# =====================================================
+mkdir -p files/etc/config
+
+cat > files/etc/config/msd_lite << 'MSD_EOF'
+config msd_lite 'config'
+	option enable '0'
+	option type '0'
+	option source 'eth0'
+	option port '7088'
+	option threads '0'
+	option buffer '16384'
+	option rejointime '0'
+MSD_EOF
+
+echo ">>> msd_lite 默认配置已写入"
