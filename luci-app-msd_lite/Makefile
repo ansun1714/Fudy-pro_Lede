@@ -11,6 +11,7 @@ LUCI_DEPENDS:=+msd_lite +rtp2httpd
 LUCI_PKGARCH:=all
 
 define Package/luci-app-msd_lite/install
+	$(call Package/luci-app-msd_lite/install/default,$(1))
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/msd_lite $(1)/etc/config/msd_lite
 	$(INSTALL_DIR) $(1)/etc/init.d
