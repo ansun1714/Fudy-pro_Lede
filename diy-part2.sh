@@ -18,23 +18,25 @@ uci commit system
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/01-system
-echo ">>> 主机名配置完成"
+echo ">>> [1] 主机名配置完成"
 
 # =====================================================
 # 2. 默认主题
 # =====================================================
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' \
-package/lean/default-settings/files/zzz-default-settings 2>/dev/null
-echo ">>> 默认主题修改完成"
+    package/lean/default-settings/files/zzz-default-settings 2>/dev/null
+echo ">>> [2] 默认主题修改完成"
 
 # =====================================================
 # 3. Lucky 权限
 # =====================================================
 find . -type f -name "lucky*" -exec chmod +x {} \; 2>/dev/null
-echo ">>> Lucky 权限修复完成"
+echo ">>> [3] Lucky 权限修复完成"
 
 # =====================================================
-# 4. WiFi 极速启动优化
+# 4. WiFi 预配置
+# 直接把 wireless 配置写入固件
+# 避免首次启动 mac80211 生成 disabled=1 的默认配置
 # =====================================================
 mkdir -p files/etc/config
 
@@ -75,13 +77,11 @@ config wifi-iface 'default_radio1'
 	option encryption 'psk2'
 	option key '12345678'
 EOF
-echo ">>> WiFi 预配置完成"
+echo ">>> [4] WiFi 预配置完成"
 
 # =====================================================
-# 5. WiFi 启动加速
+# 5. WiFi 首启优化
 # =====================================================
-mkdir -p files/etc/uci-defaults
-
 cat > files/etc/uci-defaults/99-wifi-fast << 'EOF'
 #!/bin/sh
 rm -f /etc/uci-defaults/network
@@ -90,14 +90,11 @@ wifi reload >/dev/null 2>&1
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-wifi-fast
-echo ">>> WiFi 首启优化完成"
+echo ">>> [5] WiFi 首启优化完成"
 
 # =====================================================
-# 6. Docker 数据目录配置
+# 6. Docker 数据目录
 # =====================================================
-mkdir -p files/etc/config
-mkdir -p files/etc/uci-defaults
-
 cat > files/etc/config/fstab << 'EOF'
 config global
 	option anon_mount '1'
@@ -122,7 +119,7 @@ uci commit dockerd
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/30-docker
-echo ">>> Docker 数据目录已优化"
+echo ">>> [6] Docker 数据目录配置完成"
 
 # =====================================================
 # 7. QModem 自动启用
@@ -134,28 +131,46 @@ cat > files/etc/uci-defaults/88-qmodem << 'EOF'
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/88-qmodem
-echo ">>> QModem 启用完成"
+echo ">>> [7] QModem 启用完成"
 
 # =====================================================
-# 8. 系统优化
+# 8. 系统网络优化
 # =====================================================
 cat > files/etc/sysctl.conf << 'EOF'
 net.core.default_qdisc=fq_codel
 net.ipv4.tcp_congestion_control=bbr
 EOF
-echo ">>> 系统优化完成"
+echo ">>> [8] 系统优化完成"
 
 # =====================================================
-# 9. ★ 强制覆盖 msd_lite init.d 为双后端版本 ★
+# 9. ★ msd_lite 双后端配置 ★
 #
-# 官方 ximiTech/msd_lite 包自带的 init.d 只支持 msd_lite 单后端
-# 我们的版本同时支持 msd_lite 和 rtp2httpd 两个后端切换
-# 必须在编译前覆盖，否则官方版本会覆盖我们的脚本
+# 事实依据：
+# - 官方 ximiTech/msd_lite 包自带 init.d 是单后端版本
+#   需要 instance section + XML 模板，与我们的 LuCI 界面不兼容
+# - 直接把配置文件和 init.d 写入 files/ 目录是最可靠的方式
+#   files/ 目录的文件会直接覆盖到固件根文件系统，优先级最高
 # =====================================================
-MSD_INIT="package/luci-app-msd_lite/files/etc/init.d/msd_lite"
-mkdir -p "$(dirname $MSD_INIT)"
 
-cat > "$MSD_INIT" << 'INITEOF'
+# 9-1. msd_lite 默认配置文件
+# 必须存在否则 LuCI 显示"尚无任何配置"
+cat > files/etc/config/msd_lite << 'EOF'
+config msd_lite 'config'
+	option enable '0'
+	option type '0'
+	option source 'eth0'
+	option port '7088'
+	option threads '0'
+	option buffer '16384'
+	option rejointime '0'
+EOF
+echo ">>> [9-1] msd_lite 配置文件已写入"
+
+# 9-2. msd_lite 双后端 init.d 脚本
+# 直接写入 files/etc/init.d/ 确保覆盖官方版本
+mkdir -p files/etc/init.d
+
+cat > files/etc/init.d/msd_lite << 'INITEOF'
 #!/bin/sh /etc/rc.common
 
 START=99
@@ -253,8 +268,8 @@ service_triggers() {
 }
 INITEOF
 
-chmod +x "$MSD_INIT"
-echo ">>> msd_lite 双后端 init.d 脚本已覆盖"
+chmod +x files/etc/init.d/msd_lite
+echo ">>> [9-2] msd_lite 双后端 init.d 已写入固件"
 
 # =====================================================
 # 10. Banner
@@ -273,8 +288,8 @@ EOF
 
 echo "========================================"
 echo " 所有优化完成"
-echo " WiFi 2.4G : WH3000_2.4G / 12345678"
-echo " WiFi 5G   : WH3000_5G   / 12345678"
-echo " Docker    : /mnt/mmcblk0p7/docker"
-echo " MSD Lite  : 双后端（msd_lite + rtp2httpd）"
+echo " WiFi 2.4G  : WH3000_2.4G / 12345678"
+echo " WiFi 5G    : WH3000_5G   / 12345678"
+echo " Docker     : /mnt/mmcblk0p7/docker"
+echo " MSD 双后端 : msd_lite + rtp2httpd"
 echo "========================================"
