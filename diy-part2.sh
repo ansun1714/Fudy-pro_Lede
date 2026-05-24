@@ -223,75 +223,105 @@ START=99
 USE_PROCD=1
 
 start_service() {
-
-	local enable type port source threads buffer rejointime PROG
+	local enable type
 
 	config_load "msd_lite"
-
 	config_get_bool enable "config" "enable" "0"
 	[ "$enable" -eq "1" ] || return 0
 
 	config_get type "config" "type" "0"
-	config_get port "config" "port" "7088"
-	config_get source "config" "source" "eth0"
-	config_get threads "config" "threads" "0"
-	config_get buffer "config" "buffer" "16384"
-	config_get rejointime "config" "rejointime" "0"
-
-	mkdir -p /var/etc
 
 	if [ "$type" = "0" ]; then
+		# MSD Lite 模式：自己生成 XML 配置启动
+		local port source threads buffer rejointime
 
-		PROG="/usr/bin/msd_lite"
+		config_get port       "config" "port"        "7088"
+		config_get source     "config" "source"      "eth0"
+		config_get threads    "config" "threads"     "0"
+		config_get buffer     "config" "buffer"      "16384"
+		config_get rejointime "config" "rejointime"  "0"
 
-		cat > /var/etc/msd_lite.conf << EOF
+		mkdir -p /var/etc
+		cat > /var/etc/msd_lite.conf << XMLEOF
 <?xml version="1.0" encoding="utf-8"?>
 <msd>
-<threadPool>
-<threadsCountMax>${threads}</threadsCountMax>
-</threadPool>
-<HTTP>
-<bindList>
-<bind><address>0.0.0.0:${port}</address></bind>
-</bindList>
-</HTTP>
-<sourceProfileList>
-<sourceProfile>
-<multicast>
-<ifName>${source}</ifName>
-<rejoinTime>${rejointime}</rejoinTime>
-</multicast>
-</sourceProfile>
-</sourceProfileList>
+	<log><file>/var/log/msd_lite.log</file></log>
+	<threadPool>
+		<threadsCountMax>${threads}</threadsCountMax>
+		<fBindToCPU>yes</fBindToCPU>
+	</threadPool>
+	<HTTP>
+		<bindList>
+			<bind><address>0.0.0.0:${port}</address></bind>
+			<bind><address>[::]:${port}</address></bind>
+		</bindList>
+		<hostnameList><hostname>*</hostname></hostnameList>
+	</HTTP>
+	<hubProfileList>
+		<hubProfile>
+			<fDropSlowClients>no</fDropSlowClients>
+			<fSocketTCPNoDelay>yes</fSocketTCPNoDelay>
+			<precache>${buffer}</precache>
+			<ringBufSize>1024</ringBufSize>
+			<headersList>
+				<header>Pragma: no-cache</header>
+				<header>Content-Type: video/mpeg</header>
+			</headersList>
+		</hubProfile>
+	</hubProfileList>
+	<sourceProfileList>
+		<sourceProfile>
+			<skt>
+				<rcvBuf>512</rcvBuf>
+				<rcvTimeout>2</rcvTimeout>
+			</skt>
+			<multicast>
+				<ifName>${source}</ifName>
+				<rejoinTime>${rejointime}</rejoinTime>
+			</multicast>
+		</sourceProfile>
+	</sourceProfileList>
 </msd>
-EOF
+XMLEOF
+
+		procd_open_instance
+		procd_set_param command /usr/bin/msd_lite -c /var/etc/msd_lite.conf
+		procd_set_param respawn
+		procd_set_param stderr 1
+		procd_close_instance
 
 	else
-
-		PROG="/usr/bin/rtp2httpd"
-
-		cat > /var/etc/msd_lite.conf << EOF
-[global]
-upstream-interface=${source}
-workers=${threads}
-buffer-pool-max-size=${buffer}
-mcast-rejoin-interval=${rejointime}
-
-[bind]
-* ${port}
-EOF
-
+		# rtp2httpd 模式：
+		# 直接把 /etc/config/rtp2httpd 里的 disabled 改为 0，
+		# 然后调用官方 init.d 启动，完整保留所有功能
+		# （播放器页面、M3U、FCC、RTSP 等）
+		uci set rtp2httpd.@rtp2httpd[0].disabled='0'
+		uci commit rtp2httpd
+		/etc/init.d/rtp2httpd start
 	fi
+}
 
-	procd_open_instance
-	procd_set_param command "$PROG" -c /var/etc/msd_lite.conf
-	procd_set_param respawn
-	procd_close_instance
+stop_service() {
+	local type
+	config_load "msd_lite"
+	config_get type "config" "type" "0"
+
+	if [ "$type" = "1" ]; then
+		# 停止时也要把 rtp2httpd disabled 改回 1，避免开机自启冲突
+		/etc/init.d/rtp2httpd stop
+		uci set rtp2httpd.@rtp2httpd[0].disabled='1'
+		uci commit rtp2httpd
+	fi
 }
 
 reload_service() {
 	stop
 	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger "msd_lite"
+	procd_add_reload_trigger "rtp2httpd"
 }
 INITEOF
 
