@@ -200,8 +200,9 @@ EOF
 echo ">>> [8] 系统优化完成"
 
 # =====================================================
-# 9. MSD Lite 双后端
+# 9. MSD Lite 双后端（含固化播放列表）
 # =====================================================
+
 cat > files/etc/config/msd_lite << 'EOF'
 config msd_lite 'config'
 	option enable '0'
@@ -211,15 +212,8 @@ config msd_lite 'config'
 	option threads '0'
 	option buffer '16384'
 	option rejointime '0'
-	option rtp_port '5140'
-	option rtp_source 'eth0'
-	option rtp_workers '1'
-	option rtp_buffer '16384'
-	option rtp_player_path '/player'
-	option rtp_status_path '/status'
-	option rtp_mcast_rejoin '0'
-	option rtp_zerocopy '0'
 EOF
+
 mkdir -p files/etc/init.d
 
 cat > files/etc/init.d/msd_lite << 'INITEOF'
@@ -229,127 +223,84 @@ START=99
 USE_PROCD=1
 
 start_service() {
-    local enable type
 
-    config_load "msd_lite"
-    config_get_bool enable "config" "enable" "0"
-    [ "$enable" -eq "1" ] || return 0
+	local enable type port source threads buffer rejointime PROG
 
-    config_get type "config" "type" "0"
+	config_load "msd_lite"
 
-    mkdir -p /var/etc
+	config_get_bool enable "config" "enable" "0"
+	[ "$enable" -eq "1" ] || return 0
 
-    if [ "$type" = "0" ]; then
-        local port source threads buffer rejointime
-        config_get port       "config" "port"       "7088"
-        config_get source     "config" "source"     "eth0"
-        config_get threads    "config" "threads"    "0"
-        config_get buffer     "config" "buffer"     "16384"
-        config_get rejointime "config" "rejointime" "0"
+	config_get type "config" "type" "0"
+	config_get port "config" "port" "7088"
+	config_get source "config" "source" "eth0"
+	config_get threads "config" "threads" "0"
+	config_get buffer "config" "buffer" "16384"
+	config_get rejointime "config" "rejointime" "0"
 
-        cat > /var/etc/msd_lite.conf << XMLEOF
+	mkdir -p /var/etc
+
+	if [ "$type" = "0" ]; then
+
+		PROG="/usr/bin/msd_lite"
+
+		cat > /var/etc/msd_lite.conf << EOF
 <?xml version="1.0" encoding="utf-8"?>
 <msd>
-	<log><file>/var/log/msd_lite.log</file></log>
-	<threadPool>
-		<threadsCountMax>${threads}</threadsCountMax>
-		<fBindToCPU>yes</fBindToCPU>
-	</threadPool>
-	<HTTP>
-		<bindList>
-			<bind><address>0.0.0.0:${port}</address></bind>
-			<bind><address>[::]:${port}</address></bind>
-		</bindList>
-		<hostnameList><hostname>*</hostname></hostnameList>
-	</HTTP>
-	<hubProfileList>
-		<hubProfile>
-			<fDropSlowClients>no</fDropSlowClients>
-			<fSocketTCPNoDelay>yes</fSocketTCPNoDelay>
-			<precache>${buffer}</precache>
-			<ringBufSize>1024</ringBufSize>
-			<headersList>
-				<header>Pragma: no-cache</header>
-				<header>Content-Type: video/mpeg</header>
-			</headersList>
-		</hubProfile>
-	</hubProfileList>
-	<sourceProfileList>
-		<sourceProfile>
-			<skt><rcvBuf>512</rcvBuf><rcvTimeout>2</rcvTimeout></skt>
-			<multicast>
-				<ifName>${source}</ifName>
-				<rejoinTime>${rejointime}</rejoinTime>
-			</multicast>
-		</sourceProfile>
-	</sourceProfileList>
+<threadPool>
+<threadsCountMax>${threads}</threadsCountMax>
+</threadPool>
+<HTTP>
+<bindList>
+<bind><address>0.0.0.0:${port}</address></bind>
+</bindList>
+</HTTP>
+<sourceProfileList>
+<sourceProfile>
+<multicast>
+<ifName>${source}</ifName>
+<rejoinTime>${rejointime}</rejoinTime>
+</multicast>
+</sourceProfile>
+</sourceProfileList>
 </msd>
-XMLEOF
-        procd_open_instance
-        procd_set_param command /usr/bin/msd_lite -c /var/etc/msd_lite.conf
-        procd_set_param respawn
-        procd_set_param stderr 1
-        procd_close_instance
+EOF
 
-    else
-        local rtp_port rtp_source rtp_workers rtp_maxclients rtp_buffer
-        local rtp_player_path rtp_status_path rtp_external_m3u
-        local rtp_mcast_rejoin rtp_token rtp_zerocopy
+	else
 
-        config_get rtp_port        "config" "rtp_port"        "5140"
-        config_get rtp_source      "config" "rtp_source"      "eth0"
-        config_get rtp_workers     "config" "rtp_workers"     "1"
-        config_get rtp_maxclients  "config" "rtp_maxclients"  ""
-        config_get rtp_buffer      "config" "rtp_buffer"      "16384"
-        config_get rtp_player_path "config" "rtp_player_path" "/player"
-        config_get rtp_status_path "config" "rtp_status_path" "/status"
-        config_get rtp_external_m3u "config" "rtp_external_m3u" ""
-        config_get rtp_mcast_rejoin "config" "rtp_mcast_rejoin" "0"
-        config_get rtp_token       "config" "rtp_token"       ""
-        config_get_bool rtp_zerocopy "config" "rtp_zerocopy"  "0"
+		PROG="/usr/bin/rtp2httpd"
 
-        procd_open_instance
-        procd_set_param command /usr/bin/rtp2httpd
-        procd_append_param command --noconfig
-        procd_append_param command --listen "${rtp_port}"
-        procd_append_param command --upstream-interface "${rtp_source}"
-        procd_append_param command --workers "${rtp_workers}"
-        procd_append_param command --buffer-pool-max-size "${rtp_buffer}"
-        procd_append_param command --player-page-path "${rtp_player_path}"
-        procd_append_param command --status-page-path "${rtp_status_path}"
-        procd_append_param command --mcast-rejoin-interval "${rtp_mcast_rejoin}"
-        [ -n "$rtp_maxclients" ] && \
-            procd_append_param command --maxclients "${rtp_maxclients}"
-        [ -n "$rtp_external_m3u" ] && \
-            procd_append_param command --external-m3u "${rtp_external_m3u}"
-        [ -n "$rtp_token" ] && \
-            procd_append_param command --r2h-token "${rtp_token}"
-        [ "$rtp_zerocopy" = "1" ] && \
-            procd_append_param command --zerocopy-on-send
-        procd_set_param respawn
-        procd_set_param stderr 1
-        procd_close_instance
-    fi
-}
+		cat > /var/etc/msd_lite.conf << EOF
+[global]
+verbosity = 3
+upstream-interface = ${source}
+workers = ${threads}
+buffer-pool-max-size = ${buffer}
+mcast-rejoin-interval = ${rejointime}
+zerocopy-on-send = yes
+external-m3u = https://raw.githubusercontent.com/ansun1714/myiptv/refs/heads/main/zby.m3u
 
-stop_service() {
-    # 两种模式都清理，避免残留进程
-    kill $(pgrep msd_lite) 2>/dev/null || true
-    kill $(pgrep rtp2httpd) 2>/dev/null || true
+[bind]
+* ${port}
+EOF
+
+	fi
+
+	procd_open_instance
+	procd_set_param command "$PROG" -c /var/etc/msd_lite.conf
+	procd_set_param respawn
+	procd_close_instance
 }
 
 reload_service() {
-    stop
-    start
-}
-
-service_triggers() {
-    procd_add_reload_trigger "msd_lite"
+	stop
+	start
 }
 INITEOF
 
 chmod +x files/etc/init.d/msd_lite
-echo ">>> [9-2] msd_lite 双后端 init.d 已写入固件"
+
+echo ">>> [9] MSD Lite 双后端完成（已固化播放列表）"
 
 # =====================================================
 # 10. Banner
@@ -371,6 +322,6 @@ echo " 所有优化完成"
 echo " WiFi 2.4G  : WH3000_2.4G / 12345678"
 echo " WiFi 5G    : WH3000_5G   / 12345678"
 echo " Docker     : /mnt/mmcblk0p7/docker"
-echo " MSD 双后端 : msd_lite + rtp2httpd"
+echo " MSD 双后端 : msd_lite + rtp2httpd（已固化播放列表）"
 echo " QModem     : 自动APN/自动WWAN"
 echo "========================================"
